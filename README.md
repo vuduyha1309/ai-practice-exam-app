@@ -164,7 +164,58 @@ eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmN2QxN2U4Yy0xNGU5LTRhZTUtYjAxNi1
 
 ## 📦 Deployment
 
-### Railway (Recommended)
+### 🐳 Docker Compose (All-in-one - Recommended)
+
+**Start all services** (Backend + PostgreSQL + Redis)
+```bash
+# Copy docker-compose from docker/ folder to root
+cp docker/docker-compose.yml ./
+
+# Create .env for docker
+cat > .env << EOF
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+POSTGRES_DB=ai_exam_practice
+JWT_SECRET=your-super-secret-key
+GEMINI_API_KEY=your-gemini-api-key
+EOF
+
+# Start services
+docker-compose up -d
+
+# Check logs
+docker-compose logs -f backend
+
+# Run migrations
+docker-compose exec backend npx prisma migrate deploy
+
+# Seed data
+docker-compose exec backend npm run db:seed
+
+# Stop services
+docker-compose down
+```
+
+**Access Services**
+- Backend API: http://localhost:3000/api/v1
+- PostgreSQL: localhost:5432
+- Redis: localhost:6379
+
+### 🐳 Docker Single Container
+
+```bash
+# Build image
+docker build -t ai-exam-practice:latest .
+
+# Run container (requires external PostgreSQL & Redis)
+docker run -p 3000:3000 \
+  -e DATABASE_URL="postgresql://user:pass@host:5432/db" \
+  -e REDIS_HOST="redis-host" \
+  -e JWT_SECRET="your-secret" \
+  ai-exam-practice:latest
+```
+
+### 🚀 Railway (Recommended for Production)
 1. Create account on railway.app
 2. Connect GitHub repository
 3. Set environment variables
