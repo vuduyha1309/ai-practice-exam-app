@@ -1,0 +1,424 @@
+// ============================================================
+// AI Exam Practice App — Prisma Schema v3
+// NestJS + PostgreSQL + JSONB + Subscriptions + AI Usage
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================================
+// ENUMS
+// ============================================================
+
+enum VisibilityType {
+  private
+  public
+  shared
+}
+
+enum SourceType {
+  manual
+  image
+  pdf
+  text
+  docx
+}
+
+enum ParseStatus {
+  pending
+  processing
+  done
+  failed
+}
+
+enum ImportFileType {
+  image
+  pdf
+  text
+  docx
+  url
+}
+
+enum ImportStatus {
+  pending
+  processing
+  done
+  partial
+  failed
+}
+
+enum DifficultyLevel {
+  easy
+  medium
+  hard
+}
+
+enum QuestionStatus {
+  draft
+  active
+  archived
+}
+
+enum QuestionType {
+  single_choice
+  multiple_choice
+}
+
+enum ExplanationSource {
+  ai
+  manual
+}
+
+enum PracticeMode {
+  quick
+  deep
+  exam
+  weakness
+}
+
+enum SessionStatus {
+  in_progress
+  completed
+  abandoned
+}
+
+enum SyncStatus {
+  pending
+  synced
+  conflict
+}
+
+enum SubscriptionPlan {
+  free
+  pro
+  unlimited
+}
+
+enum SubscriptionStatus {
+  active
+  cancelled
+  expired
+  past_due
+}
+
+enum AiFeatureType {
+  parse_import
+  explanation
+  translation
+  re_explanation
+}
+
+// ============================================================
+// USERS
+// ============================================================
+
+model User {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email        String   @unique
+  phone        String?  @unique
+  passwordHash String   @map("password_hash")
+  name         String
+  avatarUrl    String?  @map("avatar_url")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz()
+
+  questionSets         QuestionSet[]
+  practiceSessions     PracticeSession[]
+  questionStats        UserQuestionStat[]
+  topicStats           UserTopicStat[]
+  streakLogs           StreakLog[]
+  offlineDownloads     OfflineDownload[]
+  importJobs           ImportJob[]
+  subscription         Subscription?
+  aiUsageLogs          AiUsageLog[]
+  explanationFeedbacks ExplanationFeedback[]
+
+  @@map("users")
+}
+
+// ============================================================
+// SUBSCRIPTIONS & AI USAGE
+// ============================================================
+
+model Subscription {
+  id                 String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId             String             @unique @map("user_id") @db.Uuid
+  plan               SubscriptionPlan   @default(free)
+  status             SubscriptionStatus @default(active)
+  aiParseQuota       Int?               @map("ai_parse_quota")
+  aiExplainQuota     Int?               @map("ai_explain_quota")
+  aiTranslateQuota   Int?               @map("ai_translate_quota")
+  currentPeriodStart DateTime           @map("current_period_start") @db.Timestamptz()
+  currentPeriodEnd   DateTime           @map("current_period_end") @db.Timestamptz()
+  cancelledAt        DateTime?          @map("cancelled_at") @db.Timestamptz()
+  externalId         String?            @map("external_id")
+  createdAt          DateTime           @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt          DateTime           @default(now()) @updatedAt @map("updated_at") @db.Timestamptz()
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("subscriptions")
+}
+
+model AiUsageLog {
+  id           String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String        @map("user_id") @db.Uuid
+  featureType  AiFeatureType @map("feature_type")
+  refId        String?       @map("ref_id") @db.Uuid
+  inputTokens  Int           @default(0) @map("input_tokens")
+  outputTokens Int           @default(0) @map("output_tokens")
+  costUsd      Float         @default(0) @map("cost_usd")
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz()
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, featureType, createdAt(sort: Desc)])
+  @@map("ai_usage_logs")
+}
+
+// ============================================================
+// QUESTION BANK
+// ============================================================
+
+model QuestionSet {
+  id            String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ownerId       String         @map("owner_id") @db.Uuid
+  title         String
+  description   String?
+  visibility    VisibilityType @default(private)
+  sourceType    SourceType     @default(manual)
+  sourceFileUrl String?        @map("source_file_url")
+  aiParseStatus ParseStatus    @default(pending) @map("ai_parse_status")
+  createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt     DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz()
+
+  owner            User              @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  topics           Topic[]
+  questions        Question[]
+  practiceSessions PracticeSession[]
+  importJobs       ImportJob[]
+  offlineDownloads OfflineDownload[]
+
+  @@index([ownerId])
+  @@index([visibility])
+  @@map("question_sets")
+}
+
+model Topic {
+  id              String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  questionSetId   String  @map("question_set_id") @db.Uuid
+  name            String
+  aiSuggestedName String? @map("ai_suggested_name")
+  confirmedByUser Boolean @default(false) @map("confirmed_by_user")
+  sortOrder       Int     @default(0) @map("sort_order")
+
+  questionSet QuestionSet     @relation(fields: [questionSetId], references: [id], onDelete: Cascade)
+  questions   Question[]
+  topicStats  UserTopicStat[]
+
+  @@index([questionSetId])
+  @@map("topics")
+}
+
+model Question {
+  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  questionSetId   String          @map("question_set_id") @db.Uuid
+  topicId         String?         @map("topic_id") @db.Uuid
+  content         String?
+  contentVi       String?         @map("content_vi")
+  imageUrl        String?         @map("image_url")
+  // JSONB: [{ key, content, contentVi, isCorrect }]
+  choices         Json            @default("[]")
+  // JSONB: { content, contentVi, source, isVerified, confidenceScore, reportCount }
+  explanation     Json?
+  difficulty      DifficultyLevel @default(medium)
+  status          QuestionStatus  @default(active)
+  questionType    QuestionType    @default(single_choice) @map("question_type")
+  confidenceScore Float?          @map("confidence_score")
+  needsReview     Boolean         @default(false) @map("needs_review")
+  sortOrder       Int             @default(0) @map("sort_order")
+  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt       DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz()
+
+  questionSet          QuestionSet           @relation(fields: [questionSetId], references: [id], onDelete: Cascade)
+  topic                Topic?                @relation(fields: [topicId], references: [id], onDelete: SetNull)
+  sessionAnswers       SessionAnswer[]
+  questionStats        UserQuestionStat[]
+  explanationFeedbacks ExplanationFeedback[]
+
+  @@index([questionSetId])
+  @@index([topicId])
+  @@index([status])
+  @@index([questionType])
+  @@index([needsReview])
+  @@map("questions")
+}
+
+model ExplanationFeedback {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  questionId String   @map("question_id") @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  reason     String?
+  resolved   Boolean  @default(false)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([questionId, userId])
+  @@index([resolved])
+  @@map("explanation_feedbacks")
+}
+
+// ============================================================
+// IMPORT JOBS
+// ============================================================
+
+model ImportJob {
+  id              String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  questionSetId   String         @map("question_set_id") @db.Uuid
+  userId          String         @map("user_id") @db.Uuid
+  fileType        ImportFileType @map("file_type")
+  fileUrl         String         @map("file_url")
+  status          ImportStatus   @default(pending)
+  aiRawResult     Json?          @map("ai_raw_result")
+  parsedCount     Int            @default(0) @map("parsed_count")
+  failedCount     Int            @default(0) @map("failed_count")
+  errorMessage    String?        @map("error_message")
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz()
+  finishedAt      DateTime?      @map("finished_at") @db.Timestamptz()
+
+  questionSet QuestionSet @relation(fields: [questionSetId], references: [id], onDelete: Cascade)
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([questionSetId])
+  @@index([userId])
+  @@index([status])
+  @@map("import_jobs")
+}
+
+// ============================================================
+// PRACTICE
+// ============================================================
+
+model PracticeSession {
+  id              String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId          String        @map("user_id") @db.Uuid
+  questionSetId   String?       @map("question_set_id") @db.Uuid
+  mode            PracticeMode
+  totalQuestions  Int           @default(0) @map("total_questions")
+  answered        Int           @default(0)
+  correct         Int           @default(0)
+  durationSeconds Int           @default(0) @map("duration_seconds")
+  status          SessionStatus @default(in_progress)
+  startedAt       DateTime      @default(now()) @map("started_at") @db.Timestamptz()
+  endedAt         DateTime?     @map("ended_at") @db.Timestamptz()
+
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  questionSet QuestionSet?    @relation(fields: [questionSetId], references: [id], onDelete: SetNull)
+  answers     SessionAnswer[]
+
+  @@index([userId])
+  @@index([questionSetId])
+  @@index([startedAt(sort: Desc)])
+  @@map("practice_sessions")
+}
+
+model SessionAnswer {
+  id                  String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sessionId           String  @map("session_id") @db.Uuid
+  questionId          String  @map("question_id") @db.Uuid
+  selectedChoiceKeys  String? @map("selected_choice_keys") @db.Text // JSON array: ["A", "B"] or "A"
+  isCorrect           Boolean @default(false) @map("is_correct")
+  timeSpentMs         Int     @default(0) @map("time_spent_ms")
+  aiExplanationViewed Boolean @default(false) @map("ai_explanation_viewed")
+  translated          Boolean @default(false)
+  seqOrder            Int     @default(0) @map("seq_order")
+
+  session  PracticeSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  question Question        @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, questionId])
+  @@index([sessionId])
+  @@index([questionId])
+  @@map("session_answers")
+}
+
+// ============================================================
+// ADAPTIVE LEARNING & ANALYTICS
+// ============================================================
+
+model UserQuestionStat {
+  userId          String    @map("user_id") @db.Uuid
+  questionId      String    @map("question_id") @db.Uuid
+  attemptCount    Int       @default(0) @map("attempt_count")
+  correctCount    Int       @default(0) @map("correct_count")
+  incorrectStreak Int       @default(0) @map("incorrect_streak")
+  isBookmarked    Boolean   @default(false) @map("is_bookmarked")
+  isFlagged       Boolean   @default(false) @map("is_flagged")
+  lastAttemptedAt DateTime? @map("last_attempted_at") @db.Timestamptz()
+  difficultyScore Float     @default(0.5) @map("difficulty_score")
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@id([userId, questionId])
+  @@index([userId, incorrectStreak(sort: Desc)])
+  @@map("user_question_stats")
+}
+
+model UserTopicStat {
+  userId          String    @map("user_id") @db.Uuid
+  topicId         String    @map("topic_id") @db.Uuid
+  totalAttempted  Int       @default(0) @map("total_attempted")
+  totalCorrect    Int       @default(0) @map("total_correct")
+  accuracy        Float     @default(0)
+  lastPracticedAt DateTime? @map("last_practiced_at") @db.Timestamptz()
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  topic Topic @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@id([userId, topicId])
+  @@index([userId])
+  @@map("user_topic_stats")
+}
+
+model StreakLog {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId        String   @map("user_id") @db.Uuid
+  logDate       DateTime @map("log_date") @db.Date
+  questionsDone Int      @default(0) @map("questions_done")
+  isStreakDay   Boolean  @default(false) @map("is_streak_day")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, logDate])
+  @@index([userId, logDate(sort: Desc)])
+  @@map("streak_logs")
+}
+
+// ============================================================
+// OFFLINE
+// ============================================================
+
+model OfflineDownload {
+  id              String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId          String     @map("user_id") @db.Uuid
+  questionSetId   String     @map("question_set_id") @db.Uuid
+  downloadedAt    DateTime   @default(now()) @map("downloaded_at") @db.Timestamptz()
+  expiresAt       DateTime?  @map("expires_at") @db.Timestamptz()
+  syncStatus      SyncStatus @default(pending) @map("sync_status")
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  questionSet QuestionSet @relation(fields: [questionSetId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, questionSetId])
+  @@index([userId])
+  @@map("offline_downloads")
+}
