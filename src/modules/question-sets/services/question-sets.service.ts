@@ -53,7 +53,13 @@ export class QuestionSetsService {
   }
 
   async findOne(id: string, userId: string): Promise<QuestionSetResponseDto> {
-    const set = await this.assertCanRead(id, userId);
+    const set = await this.questionSetRepository.findByIdWithCount(id);
+    if (!set) {
+      throw new NotFoundException('Bộ đề không tồn tại');
+    }
+    if ((set as any).ownerId !== userId && (set as any).visibility === VisibilityType.private) {
+      throw new ForbiddenException('Không có quyền truy cập');
+    }
     const questionCount = (set as any)._count?.questions ?? 0;
     const topicCount = (set as any)._count?.topics ?? 0;
     return this.mapToResponseDto(set, questionCount, topicCount);
@@ -76,12 +82,8 @@ export class QuestionSetsService {
   async remove(id: string, userId: string): Promise<void> {
     const set = await this.assertOwner(id, userId);
 
-    const activeSessions = await this.questionSetRepository.countActiveSessions(id);
-    if (activeSessions > 0) {
-      throw new ConflictException('Đang có phiên luyện tập chưa kết thúc với bộ đề này');
-    }
-
-    await this.questionSetRepository.delete(id);
+    // Xóa tất cả data liên quan (cascade delete)
+    await this.questionSetRepository.deleteWithCascade(id);
   }
 
   // Helper methods

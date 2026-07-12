@@ -1,4 +1,4 @@
-import { IsUUID, IsString, IsArray, IsInt, Min, IsOptional } from 'class-validator';
+import { IsUUID, IsString, IsArray, IsInt, Min, IsOptional, IsBoolean } from 'class-validator';
 
 export class SubmitAnswerDto {
   @IsUUID()
@@ -14,4 +14,8 @@ export class SubmitAnswerDto {
 
   @IsOptional()
   aiExplanationViewed?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  markedForReview?: boolean;
 }

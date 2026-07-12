@@ -54,6 +54,33 @@ export class TopicsService {
     return topics.map((topic: any) => this.mapToResponseDto(topic, topic._count?.questions ?? 0));
   }
 
+  async findOne(setId: string, topicId: string, userId: string): Promise<TopicResponseDto> {
+    // Check if user can read the question set
+    const set = await this.questionSetRepository.findById(setId);
+    if (!set) {
+      throw new NotFoundException('Bộ đề không tồn tại');
+    }
+
+    // Check permission to read set
+    const { VisibilityType } = await import('@prisma/client');
+    if (set.ownerId !== userId && set.visibility === VisibilityType.private) {
+      throw new ForbiddenException('Không có quyền xem topic này');
+    }
+
+    // Check if topic belongs to this set
+    const belongsToSet = await this.topicRepository.belongsToSet(topicId, setId);
+    if (!belongsToSet) {
+      throw new NotFoundException('Topic không thuộc bộ đề này');
+    }
+
+    const topic = await this.topicRepository.findByIdWithCount(topicId);
+    if (!topic) {
+      throw new NotFoundException('Topic không tồn tại');
+    }
+
+    return this.mapToResponseDto(topic, topic._count?.questions ?? 0);
+  }
+
   async update(setId: string, topicId: string, dto: UpdateTopicDto, userId: string): Promise<TopicResponseDto> {
     // Check set ownership
     const set = await this.questionSetRepository.findById(setId);
@@ -125,8 +152,8 @@ export class TopicsService {
       throw new NotFoundException('Topic không thuộc bộ đề này');
     }
 
-    // Delete topic - Prisma schema has SET NULL for questions.topicId
-    await this.topicRepository.delete(topicId);
+    // Delete all questions with this topic first, then delete topic
+    await this.topicRepository.deleteTopicWithQuestions(topicId);
   }
 
   private mapToResponseDto(topic: any, questionCount: number): TopicResponseDto {
@@ -137,6 +164,7 @@ export class TopicsService {
       confirmedByUser: topic.confirmedByUser,
       sortOrder: topic.sortOrder,
       questionCount,
+      createdAt: topic.createdAt,
     };
   }
 }

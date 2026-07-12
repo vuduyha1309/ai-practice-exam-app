@@ -44,6 +44,17 @@ export class TopicsController {
     return this.topicsService.findAll(setId, user.id);
   }
 
+  @Get(':id')
+  findOne(
+    @Param('setId') setId: string,
+    @Param('id') topicId: string,
+    @CurrentUser() user: { id: string },
+  ) {
+    this.validateUUID(setId);
+    this.validateUUID(topicId);
+    return this.topicsService.findOne(setId, topicId, user.id);
+  }
+
   @Patch(':id')
   update(
     @Param('setId') setId: string,

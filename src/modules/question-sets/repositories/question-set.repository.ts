@@ -14,6 +14,17 @@ export class QuestionSetRepository {
     return this.prisma.client.questionSet.findUnique({ where: { id } });
   }
 
+  async findByIdWithCount(id: string) {
+    return this.prisma.client.questionSet.findUnique({
+      where: { id },
+      include: {
+        _count: {
+          select: { questions: true, topics: true },
+        },
+      },
+    });
+  }
+
   async findMany(
     userId: string,
     filters: {
@@ -82,5 +93,77 @@ export class QuestionSetRepository {
         status: 'in_progress',
       },
     });
+  }
+
+  async deleteWithCascade(id: string): Promise<void> {
+    // Delete all related data in correct order to avoid FK constraints
+    await this.prisma.client.$transaction([
+      // Delete session answers first (references sessions)
+      this.prisma.client.sessionAnswer.deleteMany({
+        where: {
+          session: {
+            questionSetId: id,
+          },
+        },
+      }),
+      // Delete practice sessions (references question set & topics)
+      this.prisma.client.practiceSession.deleteMany({
+        where: {
+          questionSetId: id,
+        },
+      }),
+      // Delete explanation feedbacks (references questions)
+      this.prisma.client.explanationFeedback.deleteMany({
+        where: {
+          question: {
+            questionSetId: id,
+          },
+        },
+      }),
+      // Delete user question stats (references questions)
+      this.prisma.client.userQuestionStat.deleteMany({
+        where: {
+          question: {
+            questionSetId: id,
+          },
+        },
+      }),
+      // Delete user topic stats (references topics)
+      this.prisma.client.userTopicStat.deleteMany({
+        where: {
+          topic: {
+            questionSetId: id,
+          },
+        },
+      }),
+      // Delete questions (references question set & topics)
+      this.prisma.client.question.deleteMany({
+        where: {
+          questionSetId: id,
+        },
+      }),
+      // Delete topics (references question set)
+      this.prisma.client.topic.deleteMany({
+        where: {
+          questionSetId: id,
+        },
+      }),
+      // Delete offline downloads (references question set)
+      this.prisma.client.offlineDownload.deleteMany({
+        where: {
+          questionSetId: id,
+        },
+      }),
+      // Delete import jobs (references question set)
+      this.prisma.client.importJob.deleteMany({
+        where: {
+          questionSetId: id,
+        },
+      }),
+      // Finally delete the question set itself
+      this.prisma.client.questionSet.delete({
+        where: { id },
+      }),
+    ]);
   }
 }

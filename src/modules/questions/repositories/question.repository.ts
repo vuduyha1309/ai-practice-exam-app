@@ -21,7 +21,10 @@ export class QuestionRepository {
     const skip = filters?.page ? (filters.page - 1) * (filters.limit || 20) : undefined;
     const take = filters?.limit || 20;
 
-    const where: Prisma.QuestionWhereInput = { questionSetId: setId };
+    const where: Prisma.QuestionWhereInput = {
+      questionSetId: setId,
+      status: { in: ['active', 'draft'] }, // Exclude archived
+    };
     if (filters?.needsReview !== undefined) {
       where.needsReview = filters.needsReview;
     }

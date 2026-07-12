@@ -218,9 +218,10 @@ model Topic {
   confirmedByUser Boolean @default(false) @map("confirmed_by_user")
   sortOrder       Int     @default(0) @map("sort_order")
 
-  questionSet QuestionSet     @relation(fields: [questionSetId], references: [id], onDelete: Cascade)
-  questions   Question[]
-  topicStats  UserTopicStat[]
+  questionSet      QuestionSet       @relation(fields: [questionSetId], references: [id], onDelete: Cascade)
+  questions        Question[]
+  topicStats       UserTopicStat[]
+  practiceSessions PracticeSession[]
 
   @@index([questionSetId])
   @@map("topics")
@@ -311,6 +312,7 @@ model PracticeSession {
   id              String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId          String        @map("user_id") @db.Uuid
   questionSetId   String?       @map("question_set_id") @db.Uuid
+  topicId         String?       @map("topic_id") @db.Uuid
   mode            PracticeMode
   totalQuestions  Int           @default(0) @map("total_questions")
   answered        Int           @default(0)
@@ -321,11 +323,13 @@ model PracticeSession {
   endedAt         DateTime?     @map("ended_at") @db.Timestamptz()
 
   user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  questionSet QuestionSet?    @relation(fields: [questionSetId], references: [id], onDelete: SetNull)
+  questionSet QuestionSet?    @relation(fields: [questionSetId], references: [id], onDelete: Cascade)
+  topic       Topic?          @relation(fields: [topicId], references: [id], onDelete: Cascade)
   answers     SessionAnswer[]
 
   @@index([userId])
   @@index([questionSetId])
+  @@index([topicId])
   @@index([startedAt(sort: Desc)])
   @@map("practice_sessions")
 }
@@ -339,6 +343,7 @@ model SessionAnswer {
   timeSpentMs         Int     @default(0) @map("time_spent_ms")
   aiExplanationViewed Boolean @default(false) @map("ai_explanation_viewed")
   translated          Boolean @default(false)
+  markedForReview     Boolean @default(false) @map("marked_for_review")
   seqOrder            Int     @default(0) @map("seq_order")
 
   session  PracticeSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)

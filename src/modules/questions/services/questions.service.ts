@@ -116,7 +116,7 @@ export class QuestionsService {
     return this.mapToResponseDto(question);
   }
 
-  async remove(setId: string, questionId: string, userId: string): Promise<void> {
+  async remove(setId: string, questionId: string, userId: string): Promise<QuestionResponseDto> {
     // Verify user owns the set
     const set = await this.questionSetRepository.findById(setId);
     if (!set) {
@@ -132,7 +132,9 @@ export class QuestionsService {
       throw new NotFoundException('Câu hỏi không thuộc bộ đề này');
     }
 
-    await this.questionRepository.delete(questionId);
+    // Soft delete: mark question as archived instead of deleting
+    const question = await this.questionRepository.update(questionId, { status: 'archived' });
+    return this.mapToResponseDto(question);
   }
 
   async updateExplanation(

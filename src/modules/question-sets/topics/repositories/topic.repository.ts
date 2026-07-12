@@ -57,6 +57,37 @@ export class TopicRepository {
     return this.prisma.client.topic.delete({ where: { id } });
   }
 
+  async deleteTopicWithQuestions(topicId: string): Promise<void> {
+    // Delete all session answers referencing this topic's sessions
+    await this.prisma.client.sessionAnswer.deleteMany({
+      where: {
+        session: {
+          topicId,
+        },
+      },
+    });
+
+    // Delete all practice sessions with this topic
+    await this.prisma.client.practiceSession.deleteMany({
+      where: { topicId },
+    });
+
+    // Delete all questions with this topic
+    await this.prisma.client.question.deleteMany({
+      where: { topicId },
+    });
+
+    // Delete all user topic stats with this topic
+    await this.prisma.client.userTopicStat.deleteMany({
+      where: { topicId },
+    });
+
+    // Finally delete the topic itself
+    await this.prisma.client.topic.delete({
+      where: { id: topicId },
+    });
+  }
+
   async belongsToSet(topicId: string, setId: string): Promise<boolean> {
     const topic = await this.prisma.client.topic.findFirst({
       where: { id: topicId, questionSetId: setId },

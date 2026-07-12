@@ -32,7 +32,9 @@ export class ImportJobRepository {
     return this.prisma.client.importJob.findFirst({
       where: {
         questionSetId: setId,
-        status: ImportStatus.processing,
+        status: {
+          in: [ImportStatus.pending, ImportStatus.processing],
+        },
       },
     });
   }
@@ -40,6 +42,12 @@ export class ImportJobRepository {
   async countBySetId(setId: string): Promise<number> {
     return this.prisma.client.importJob.count({
       where: { questionSetId: setId },
+    });
+  }
+
+  async delete(id: string): Promise<ImportJob> {
+    return this.prisma.client.importJob.delete({
+      where: { id },
     });
   }
 }

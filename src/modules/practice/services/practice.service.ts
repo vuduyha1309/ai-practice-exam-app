@@ -27,8 +27,57 @@ export class PracticeService {
       throw new NotFoundException('Bộ đề không tồn tại');
     }
 
-    // Get all active questions in set
-    const questions = await this.practiceRepository.getQuestionsBySet(dto.questionSetId);
+    const mode = dto.mode || PracticeMode.quick;
+    let questions: any[] = [];
+
+    // Determine question selection based on mode
+    switch (mode) {
+      case 'quick':
+        // Quick mode: 10-15 random questions (fixed: 12)
+        const allQuestions = await this.practiceRepository.getQuestionsBySet(dto.questionSetId, 100);
+        // Shuffle and take 12
+        questions = allQuestions
+          .sort(() => Math.random() - 0.5)
+          .slice(0, Math.min(12, allQuestions.length));
+        break;
+
+      case 'deep':
+        // Deep mode: 30-45 questions (fixed: 40, covering all topics)
+        const deepQuestions = await this.practiceRepository.getQuestionsBySet(dto.questionSetId, 100);
+        questions = deepQuestions
+          .sort(() => Math.random() - 0.5)
+          .slice(0, Math.min(40, deepQuestions.length));
+        break;
+
+      case 'exam':
+        // Exam mode: 60-90 questions (full exam simulation)
+        questions = await this.practiceRepository.getQuestionsBySet(dto.questionSetId, 100);
+        // Return up to 75 questions
+        questions = questions.slice(0, Math.min(75, questions.length));
+        break;
+
+      case 'weakness':
+        // Weakness mode: Focus on weak topics (requires user history)
+        try {
+          const weakTopics = await this.practiceRepository.getWeakTopics(userId, 5);
+          if (weakTopics.length === 0) {
+            throw new BadRequestException('Không có dữ liệu để luyện tập các phần yếu. Vui lòng luyện tập trước.');
+          }
+          const topicIds = weakTopics.map((t) => t.topicId);
+          questions = await this.practiceRepository.getQuestionsByTopics(dto.questionSetId, topicIds, 20);
+        } catch (error) {
+          if (error instanceof BadRequestException) throw error;
+          throw new BadRequestException('Không thể tạo weakness mode');
+        }
+        break;
+
+      default:
+        // Fallback: Quick mode
+        const fallbackQuestions = await this.practiceRepository.getQuestionsBySet(dto.questionSetId, 100);
+        questions = fallbackQuestions
+          .sort(() => Math.random() - 0.5)
+          .slice(0, Math.min(12, fallbackQuestions.length));
+    }
 
     if (questions.length === 0) {
       throw new BadRequestException('Bộ đề không có câu hỏi nào');
@@ -38,7 +87,7 @@ export class PracticeService {
     const session = await this.practiceRepository.createSession({
       user: { connect: { id: userId } },
       questionSet: { connect: { id: dto.questionSetId } },
-      mode: dto.mode || PracticeMode.quick,
+      mode,
       totalQuestions: questions.length,
       status: SessionStatus.in_progress,
       startedAt: new Date(),
@@ -78,6 +127,15 @@ export class PracticeService {
       const set = await this.questionSetRepository.findById(session.questionSetId);
       if (set) {
         questionSetTitle = set.title;
+      }
+    }
+
+    // Get topic info if available
+    let topicName = '';
+    if (session.topicId) {
+      const topic = await this.practiceRepository.getTopicById(session.topicId);
+      if (topic) {
+        topicName = topic.name;
       }
     }
 
@@ -127,6 +185,7 @@ export class PracticeService {
       }),
     );
 
+    // accuracy = correct/answered * 100 (đã là phần trăm)
     const accuracy = session.answered > 0 ? (session.correct / session.answered) * 100 : 0;
 
     return {
@@ -134,11 +193,13 @@ export class PracticeService {
       userId: session.userId,
       questionSetId: session.questionSetId,
       questionSetTitle,
+      topicId: session.topicId,
+      topicName,
       mode: session.mode,
       totalQuestions: session.totalQuestions,
       answered: session.answered,
       correct: session.correct,
-      accuracy: Math.round(accuracy * 100) / 100,
+      accuracy: Math.round(accuracy * 100) / 100,  // Làm tròn 2 chữ số thập phân
       durationSeconds: session.durationSeconds,
       status: session.status,
       startedAt: session.startedAt,
@@ -205,6 +266,7 @@ export class PracticeService {
         isCorrect,
         timeSpentMs: dto.timeSpentMs,
         aiExplanationViewed: dto.aiExplanationViewed,
+        markedForReview: dto.markedForReview,
       });
     } else {
       // Create new answer
@@ -216,6 +278,7 @@ export class PracticeService {
         isCorrect,
         timeSpentMs: dto.timeSpentMs,
         aiExplanationViewed: dto.aiExplanationViewed,
+        markedForReview: dto.markedForReview,
         seqOrder,
       });
     }
@@ -290,17 +353,20 @@ export class PracticeService {
   }
 
   private mapToResponseDto(session: any): SessionResponseDto {
+    // accuracy = correct/answered * 100 (đã là phần trăm)
     const accuracy = session.answered > 0 ? (session.correct / session.answered) * 100 : 0;
 
     return {
       id: session.id,
       userId: session.userId,
       questionSetId: session.questionSetId,
+      questionSetTitle: session.questionSet?.title || 'Unknown Set',
+      topicId: session.topicId,
       mode: session.mode,
       totalQuestions: session.totalQuestions,
       answered: session.answered,
       correct: session.correct,
-      accuracy: Math.round(accuracy * 100) / 100,
+      accuracy: Math.round(accuracy * 100) / 100,  // Làm tròn 2 chữ số thập phân
       durationSeconds: session.durationSeconds,
       status: session.status,
       startedAt: session.startedAt,
@@ -346,12 +412,97 @@ export class PracticeService {
     };
   }
 
+  async startQuickMode(userId: string, setId: string): Promise<SessionResponseDto> {
+    const set = await this.questionSetRepository.findById(setId);
+    if (!set) {
+      throw new NotFoundException('Bộ đề không tồn tại');
+    }
+
+    // Get 12 random questions
+    const allQuestions = await this.practiceRepository.getQuestionsBySet(setId, 100);
+    const questions = allQuestions
+      .sort(() => Math.random() - 0.5)
+      .slice(0, Math.min(12, allQuestions.length));
+
+    if (questions.length === 0) {
+      throw new BadRequestException('Bộ đề không có câu hỏi nào');
+    }
+
+    const session = await this.practiceRepository.createSession({
+      user: { connect: { id: userId } },
+      questionSet: { connect: { id: setId } },
+      mode: 'quick',
+      totalQuestions: questions.length,
+      status: SessionStatus.in_progress,
+      startedAt: new Date(),
+    });
+
+    return this.mapToResponseDto(session);
+  }
+
+  async startDeepMode(userId: string, setId: string): Promise<SessionResponseDto> {
+    const set = await this.questionSetRepository.findById(setId);
+    if (!set) {
+      throw new NotFoundException('Bộ đề không tồn tại');
+    }
+
+    // Get 40 random questions
+    const allQuestions = await this.practiceRepository.getQuestionsBySet(setId, 100);
+    const questions = allQuestions
+      .sort(() => Math.random() - 0.5)
+      .slice(0, Math.min(40, allQuestions.length));
+
+    if (questions.length === 0) {
+      throw new BadRequestException('Bộ đề không có câu hỏi nào');
+    }
+
+    const session = await this.practiceRepository.createSession({
+      user: { connect: { id: userId } },
+      questionSet: { connect: { id: setId } },
+      mode: 'deep',
+      totalQuestions: questions.length,
+      status: SessionStatus.in_progress,
+      startedAt: new Date(),
+    });
+
+    return this.mapToResponseDto(session);
+  }
+
+  async startExamMode(userId: string, setId: string): Promise<SessionResponseDto> {
+    const set = await this.questionSetRepository.findById(setId);
+    if (!set) {
+      throw new NotFoundException('Bộ đề không tồn tại');
+    }
+
+    // Get 75 questions for exam
+    const allQuestions = await this.practiceRepository.getQuestionsBySet(setId, 100);
+    const questions = allQuestions.slice(0, Math.min(75, allQuestions.length));
+
+    if (questions.length === 0) {
+      throw new BadRequestException('Bộ đề không có câu hỏi nào');
+    }
+
+    const session = await this.practiceRepository.createSession({
+      user: { connect: { id: userId } },
+      questionSet: { connect: { id: setId } },
+      mode: 'exam',
+      totalQuestions: questions.length,
+      status: SessionStatus.in_progress,
+      startedAt: new Date(),
+    });
+
+    return this.mapToResponseDto(session);
+  }
+
   async startWeaknessMode(userId: string, setId: string, questionCount: number): Promise<SessionResponseDto> {
-    // Get user's weak topics (lowest accuracy)
+    // Get user's weak topics (lowest accuracy) - TOP 5
     const weakTopics = await this.practiceRepository.getWeakTopics(userId, 5);
 
+    // Must have weak topics (requires practice history)
     if (weakTopics.length === 0) {
-      throw new BadRequestException('Không có dữ liệu để luyện tập các phần yếu. Vui lòng luyện tập trước.');
+      throw new BadRequestException(
+        'Không đủ dữ liệu để luyện tập chế độ Weakness. Vui lòng hoàn thành ít nhất một phiên luyện tập chuẩn (Quick/Deep/Exam) trước.'
+      );
     }
 
     // Get questions from weak topics
@@ -359,10 +510,9 @@ export class PracticeService {
     const questions = await this.practiceRepository.getQuestionsByTopics(setId, topicIds, questionCount);
 
     if (questions.length === 0) {
-      throw new BadRequestException('Không có câu hỏi trong các phần yếu');
+      throw new BadRequestException('Không có câu hỏi trong các phần yếu của bộ đề này');
     }
 
-    // Create session
     const session = await this.practiceRepository.createSession({
       user: { connect: { id: userId } },
       questionSet: { connect: { id: setId } },
@@ -379,11 +529,13 @@ export class PracticeService {
     // Get most mistaken questions
     const questions = await this.practiceRepository.getMostMistakenQuestions(userId, setId, questionCount);
 
+    // Must have mistaken questions (requires practice history with mistakes)
     if (questions.length === 0) {
-      throw new BadRequestException('Không có câu hỏi sai. Vui lòng luyện tập trước.');
+      throw new BadRequestException(
+        'Không đủ dữ liệu để luyện tập chế độ Most-Mistaken. Bạn cần trả lời sai ít nhất vài câu trong các phiên luyện tập trước.'
+      );
     }
 
-    // Create session
     const session = await this.practiceRepository.createSession({
       user: { connect: { id: userId } },
       questionSet: { connect: { id: setId } },
@@ -408,7 +560,6 @@ export class PracticeService {
       throw new BadRequestException(`Không có câu hỏi ${difficulty}`);
     }
 
-    // Create session
     const session = await this.practiceRepository.createSession({
       user: { connect: { id: userId } },
       questionSet: { connect: { id: setId } },
@@ -420,6 +571,7 @@ export class PracticeService {
 
     return this.mapToResponseDto(session);
   }
+
   async startTopicMode(userId: string, setId: string, topicId: string, questionCount: number): Promise<SessionResponseDto> {
     const questions = await this.practiceRepository.getQuestionsByTopic(setId, topicId, questionCount);
 
@@ -427,10 +579,10 @@ export class PracticeService {
       throw new BadRequestException('Không có câu hỏi trong chủ đề này');
     }
 
-    // Create session
     const session = await this.practiceRepository.createSession({
       user: { connect: { id: userId } },
       questionSet: { connect: { id: setId } },
+      topic: { connect: { id: topicId } },
       mode: 'quick',
       totalQuestions: questions.length,
       status: SessionStatus.in_progress,
@@ -453,18 +605,23 @@ export class PracticeService {
     },
   ): Promise<SessionResponseDto> {
     const questionIds = new Set<string>();
+    let primaryTopicId: string | undefined;
 
     // Get weak areas questions
     if (options.includeWeakAreas) {
       try {
         const weakTopics = await this.practiceRepository.getWeakTopics(userId, 3);
-        const topicIds = weakTopics.map((t) => t.topicId);
-        const weakQuestions = await this.practiceRepository.getQuestionsByTopics(
-          setId,
-          topicIds,
-          Math.ceil(options.questionCount * 0.3),
-        );
-        weakQuestions.forEach((q) => questionIds.add(q.id));
+        if (weakTopics.length > 0) {
+          // Track primary weak topic
+          primaryTopicId = weakTopics[0].topicId;
+          const topicIds = weakTopics.map((t) => t.topicId);
+          const weakQuestions = await this.practiceRepository.getQuestionsByTopics(
+            setId,
+            topicIds,
+            Math.ceil(options.questionCount * 0.3),
+          );
+          weakQuestions.forEach((q) => questionIds.add(q.id));
+        }
       } catch {
         // Skip if no weak areas
       }
@@ -478,7 +635,9 @@ export class PracticeService {
           setId,
           Math.ceil(options.questionCount * 0.3),
         );
-        mistakenQuestions.forEach((q) => questionIds.add(q.questionId));
+        if (mistakenQuestions.length > 0) {
+          mistakenQuestions.forEach((q) => questionIds.add(q.questionId));
+        }
       } catch {
         // Skip if no mistaken questions
       }
@@ -512,22 +671,31 @@ export class PracticeService {
       hardQuestions.forEach((q) => questionIds.add(q.id));
     }
 
+    // Must have enough questions from smart selection
     if (questionIds.size === 0) {
-      throw new BadRequestException('Không có câu hỏi phù hợp. Vui lòng luyện tập trước.');
+      throw new BadRequestException(
+        'Không đủ dữ liệu để luyện tập chế độ Mixed. Bạn cần hoàn thành ít nhất một phiên luyện tập chuẩn (Quick/Deep/Exam) trước.'
+      );
     }
 
     // Limit to requested question count
     const finalQuestionIds = Array.from(questionIds).slice(0, options.questionCount);
 
-    // Create session
-    const session = await this.practiceRepository.createSession({
+    const sessionData: any = {
       user: { connect: { id: userId } },
       questionSet: { connect: { id: setId } },
       mode: 'deep',
       totalQuestions: finalQuestionIds.length,
       status: SessionStatus.in_progress,
       startedAt: new Date(),
-    });
+    };
+
+    // Track primary topic if available (from weak areas)
+    if (primaryTopicId) {
+      sessionData.topic = { connect: { id: primaryTopicId } };
+    }
+
+    const session = await this.practiceRepository.createSession(sessionData);
 
     return this.mapToResponseDto(session);
   }

@@ -32,6 +32,8 @@ export class SessionReviewDto {
   userId: string;
   questionSetId: string | null;
   questionSetTitle?: string;
+  topicId?: string | null;
+  topicName?: string;
   mode: PracticeMode;
   totalQuestions: number;
   answered: number;
@@ -48,6 +50,8 @@ export class SessionResponseDto {
   id: string;
   userId: string;
   questionSetId: string | null;
+  questionSetTitle?: string;
+  topicId?: string | null;
   mode: PracticeMode;
   totalQuestions: number;
   answered: number;

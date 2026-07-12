@@ -19,9 +19,9 @@ export class ImportProcessor extends WorkerHost {
     super();
   }
 
-  async process(job: Job<{ importJobId: string }>): Promise<void> {
-    const { importJobId } = job.data;
-    this.logger.log(`Processing import job: ${importJobId}`);
+  async process(job: Job<{ importJobId: string; generationMode?: string; textContent?: string }>): Promise<void> {
+    const { importJobId, generationMode, textContent } = job.data;
+    this.logger.log(`Processing import job: ${importJobId}, mode: ${generationMode || 'auto'}, hasTextContent: ${!!textContent}`);
 
     try {
       // 1. Get job info
@@ -40,35 +40,59 @@ export class ImportProcessor extends WorkerHost {
         data: { status: ImportStatus.processing },
       });
 
-      // 3. Read file
-      const fileBuffer = await this.fileStorage.getFile(importJob.fileUrl);
+      // 3. Read file or use text content directly
+      let fileBuffer: Buffer | null = null;
+      let parseInput: any;
 
-      // 4. Prepare input for AI
-      const parseInput = await this.prepareInput(importJob.fileType, fileBuffer, importJob.fileUrl);
-
-      // 5. Call AI - detect mode based on file content
-      let result;
-      
-      if (importJob.fileType === 'text' || importJob.fileUrl.endsWith('.txt')) {
-        // Text files: can be either quiz or document
-        const textContent = parseInput.data;
-        
-        // Check if looks like quiz (has question markers like 1. 2. 3. or A) B) C) D))
-        const hasQuizMarkers = /^[\s\n]*(1\.|A\)|Question|1\))/m.test(textContent);
-        
-        if (hasQuizMarkers) {
-          // Parse as existing quiz
-          this.logger.log(`Mode: Parse existing quiz from text`);
-          result = await this.ai.parseDocument(parseInput);
-        } else {
-          // Generate quiz from document
-          this.logger.log(`Mode: Generate quiz from document`);
-          result = await this.ai.generateQuizFromDocument(textContent);
-        }
+      if (textContent) {
+        // For text content, skip file reading
+        parseInput = {
+          type: 'text',
+          data: textContent,
+        };
       } else {
-        // Images/PDF: always parse as existing quiz
-        this.logger.log(`Mode: Parse existing quiz from ${importJob.fileType}`);
+        // Read file for normal file-based import
+        fileBuffer = await this.fileStorage.getFile(importJob.fileUrl);
+        parseInput = await this.prepareInput(importJob.fileType, fileBuffer, importJob.fileUrl);
+      }
+
+      // 4. Call AI - detect mode based on file content or use provided textContent
+      let result;
+
+      // If textContent is provided directly, always generate
+      if (textContent) {
+        this.logger.log(`Mode: Generate quiz from direct text input`);
+        result = await this.ai.generateQuizFromDocument(textContent);
+      } else if (generationMode === 'generate') {
+        this.logger.log(`Mode: Generate quiz from document (explicit)`);
+        const textContent = parseInput.data;
+        result = await this.ai.generateQuizFromDocument(textContent);
+      } else if (generationMode === 'parse') {
+        this.logger.log(`Mode: Parse existing quiz (explicit)`);
         result = await this.ai.parseDocument(parseInput);
+      } else {
+        // Auto-detect mode
+        if (importJob.fileType === 'text' || importJob.fileUrl.endsWith('.txt')) {
+          // Text files: can be either quiz or document
+          const textContent = parseInput.data;
+          
+          // Check if looks like quiz (has question markers like 1. 2. 3. or A) B) C) D))
+          const hasQuizMarkers = /^[\s\n]*(1\.|A\)|Question|1\))/m.test(textContent);
+          
+          if (hasQuizMarkers) {
+            // Parse as existing quiz
+            this.logger.log(`Mode: Parse existing quiz from text (auto-detected)`);
+            result = await this.ai.parseDocument(parseInput);
+          } else {
+            // Generate quiz from document
+            this.logger.log(`Mode: Generate quiz from document (auto-detected)`);
+            result = await this.ai.generateQuizFromDocument(textContent);
+          }
+        } else {
+          // Images/PDF: always parse as existing quiz
+          this.logger.log(`Mode: Parse existing quiz from ${importJob.fileType} (auto)`);
+          result = await this.ai.parseDocument(parseInput);
+        }
       }
 
       // 6. Save to database
@@ -140,10 +164,21 @@ export class ImportProcessor extends WorkerHost {
 
     if (fileType === 'pdf' || filepath.endsWith('.pdf')) {
       try {
-        // For now, just convert to text representation
+        // Use pdf-parse to extract text from PDF
+        const { PDFParse } = require('pdf-parse');
+        const parser = new PDFParse({ data: buffer });
+        const result = await parser.getText();
+        const extractedText = result.text;
+        
+        if (!extractedText || extractedText.trim().length === 0) {
+          throw new Error('No text could be extracted from PDF');
+        }
+        
+        await parser.destroy();
+        
         return {
           type: 'text',
-          data: `[PDF File - ${buffer.length} bytes]`,
+          data: extractedText,
         };
       } catch (error) {
         throw new Error(`Failed to parse PDF: ${error.message}`);

@@ -46,12 +46,31 @@ export class PracticeRepository {
 
     const [sessions, total] = await Promise.all([
       this.prisma.client.practiceSession.findMany({
-        where: { userId },
+        where: {
+          userId,
+          status: 'completed',
+          questionSet: {
+            isNot: null,
+          },
+        },
+        include: {
+          questionSet: {
+            select: { title: true },
+          },
+        },
         skip,
         take: limit,
         orderBy: { startedAt: 'desc' },
       }),
-      this.prisma.client.practiceSession.count({ where: { userId } }),
+      this.prisma.client.practiceSession.count({
+        where: {
+          userId,
+          status: 'completed',
+          questionSet: {
+            isNot: null,
+          },
+        },
+      }),
     ]);
 
     return { sessions, total };
@@ -191,6 +210,12 @@ export class PracticeRepository {
       },
       take: limit,
       orderBy: { sortOrder: 'asc' },
+    });
+  }
+
+  async getTopicById(topicId: string) {
+    return this.prisma.client.topic.findUnique({
+      where: { id: topicId },
     });
   }
 }

@@ -29,6 +29,7 @@ export class ImportService {
     userId: string,
     file: Express.Multer.File,
     fileType: ImportFileType,
+    generationMode?: string,
   ): Promise<{ importJobId: string; status: ImportStatus }> {
     // 1. Validate set ownership
     const set = await this.questionSetRepository.findById(setId);
@@ -39,16 +40,10 @@ export class ImportService {
       throw new ForbiddenException('Không có quyền import vào bộ đề này');
     }
 
-    // 2. Check no active job
-    const activeJob = await this.importJobRepository.findActiveJob(setId);
-    if (activeJob) {
-      throw new ConflictException('Đang có import job đang chạy, vui lòng đợi');
-    }
-
-    // 3. Validate file
+    // 2. Validate file
     this.validateFile(file);
 
-    // 4. Save file
+    // 3. Save file
     const filename = `${uuidv4()}-${Date.now()}${this.getFileExtension(file.mimetype)}`;
     const filepath = await this.fileStorage.saveFile(filename, file.buffer);
 
@@ -66,8 +61,12 @@ export class ImportService {
       aiParseStatus: ParseStatus.processing,
     });
 
-    // 7. Queue job
-    await this.importQueue.add('parse', { importJobId: importJob.id });
+    // 7. Queue job with generationMode if specified
+    const jobData: any = { importJobId: importJob.id };
+    if (generationMode) {
+      jobData.generationMode = generationMode;
+    }
+    await this.importQueue.add('parse', jobData);
 
     return {
       importJobId: importJob.id,
@@ -105,6 +104,82 @@ export class ImportService {
 
     const jobs = await this.importJobRepository.findBySetId(setId);
     return jobs.map((job) => this.mapToResponseDto(job));
+  }
+
+  async deleteJob(setId: string, jobId: string, userId: string): Promise<{ message: string }> {
+    // Verify user owns the set
+    const set = await this.questionSetRepository.findById(setId);
+    if (!set) {
+      throw new NotFoundException('Bộ đề không tồn tại');
+    }
+    if (set.ownerId !== userId) {
+      throw new ForbiddenException('Không có quyền xóa job này');
+    }
+
+    const job = await this.importJobRepository.findById(jobId);
+    if (!job || job.questionSetId !== setId) {
+      throw new NotFoundException('Import job không tồn tại');
+    }
+
+    // Don't allow deleting active jobs
+    if (job.status === ImportStatus.processing || job.status === ImportStatus.pending) {
+      throw new ConflictException('Không thể xóa job đang chạy');
+    }
+
+    await this.importJobRepository.delete(jobId);
+
+    return { message: 'Import job đã được xóa' };
+  }
+
+  async createTextImportJob(
+    setId: string,
+    userId: string,
+    content: string,
+  ): Promise<{ importJobId: string; status: ImportStatus }> {
+    // Validate set ownership
+    const set = await this.questionSetRepository.findById(setId);
+    if (!set) {
+      throw new NotFoundException('Bộ đề không tồn tại');
+    }
+    if (set.ownerId !== userId) {
+      throw new ForbiddenException('Không có quyền import vào bộ đề này');
+    }
+
+    // Validate content
+    if (!content || content.trim().length === 0) {
+      throw new BadRequestException('Content cannot be empty');
+    }
+
+    const wordCount = content.split(/\s+/).filter(w => w.length > 0).length;
+    if (wordCount > 5000) {
+      throw new BadRequestException('Content exceeds 5000 words limit');
+    }
+
+    // Create ImportJob for text content
+    const importJob = await this.importJobRepository.create({
+      questionSet: { connect: { id: setId } },
+      user: { connect: { id: userId } },
+      fileType: ImportFileType.text,
+      fileUrl: 'text-content', // Placeholder
+      status: ImportStatus.pending,
+    });
+
+    // Update QuestionSet status
+    await this.questionSetRepository.update(setId, {
+      aiParseStatus: ParseStatus.processing,
+    });
+
+    // Queue job with content and force generate mode
+    await this.importQueue.add('parse', {
+      importJobId: importJob.id,
+      textContent: content,
+      generationMode: 'generate',
+    });
+
+    return {
+      importJobId: importJob.id,
+      status: ImportStatus.pending,
+    };
   }
 
   private validateFile(file: Express.Multer.File): void {

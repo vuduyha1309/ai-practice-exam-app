@@ -2,6 +2,7 @@ import {
   Controller,
   Post,
   Get,
+  Delete,
   Param,
   UseGuards,
   UseInterceptors,
@@ -9,6 +10,7 @@ import {
   UploadedFiles,
   BadRequestException,
   Query,
+  Body,
 } from '@nestjs/common';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { ImportService } from './services/import.service';
@@ -46,16 +48,23 @@ export class ImportController {
     @Param('setId') setId: string,
     @UploadedFiles() files: Express.Multer.File[],
     @Query('fileType') queryFileType?: string,
+    @Query('generationMode') generationMode?: string,
+    @Body() body?: { content?: string; mode?: string },
     @CurrentUser() user?: { id: string },
   ) {
     this.validateUUID(setId);
 
-    if (!files || files.length === 0) {
-      throw new BadRequestException('File không được cung cấp');
-    }
-
     if (!user) {
       throw new BadRequestException('User not found');
+    }
+
+    // Handle text content mode
+    if (body?.content && body?.mode === 'generate_from_text') {
+      return this.importService.createTextImportJob(setId, user.id, body.content);
+    }
+
+    if (!files || files.length === 0) {
+      throw new BadRequestException('File không được cung cấp');
     }
 
     // Nếu chỉ 1 file, trả về object (backward compatible)
@@ -65,7 +74,7 @@ export class ImportController {
       if (queryFileType && this.isValidFileType(queryFileType)) {
         fileType = queryFileType as ImportFileType;
       }
-      return this.importService.uploadAndCreateJob(setId, user.id, file, fileType);
+      return this.importService.uploadAndCreateJob(setId, user.id, file, fileType, generationMode);
     }
 
     // Nếu nhiều files, tạo import job cho mỗi file
@@ -75,7 +84,7 @@ export class ImportController {
         if (queryFileType && this.isValidFileType(queryFileType)) {
           fileType = queryFileType as ImportFileType;
         }
-        return this.importService.uploadAndCreateJob(setId, user.id, file, fileType);
+        return this.importService.uploadAndCreateJob(setId, user.id, file, fileType, generationMode);
       }),
     );
 
@@ -104,6 +113,17 @@ export class ImportController {
   ) {
     this.validateUUID(setId);
     return this.importService.getJobHistory(setId, user.id);
+  }
+
+  @Delete(':jobId')
+  async deleteJob(
+    @Param('setId') setId: string,
+    @Param('jobId') jobId: string,
+    @CurrentUser() user: { id: string },
+  ) {
+    this.validateUUID(setId);
+    this.validateUUID(jobId);
+    return this.importService.deleteJob(setId, jobId, user.id);
   }
 
   private getFileType(mimetype: string): ImportFileType {

@@ -5,5 +5,5 @@ export class TopicResponseDto {
   confirmedByUser: boolean;
   sortOrder: number;
   questionCount: number;
-  createdAt?: Date;
+  createdAt: Date;
 }
